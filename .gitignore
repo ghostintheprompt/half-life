@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+decay.json
+.DS_Store
