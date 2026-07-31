@@ -2,7 +2,7 @@
 
 A content-decay auditor. It reads a folder of writing and tells you what's rotted.
 
-Content rots the moment it's published. The 2019 tutorial with the dead `npm install`. The SEO fossil nobody updated. The doc describing a folder that no longer exists. The model ID that shipped three months ago and now dates the whole piece. Human content decays silently and pretends it hasn't — the static page frozen in amber, the broken link that's been broken since a redesign two years back. Lasting forever isn't the goal; it's the dishonest cosplay of the monument.
+Content rots the moment it's published. The 2019 tutorial with the dead `npm install`. The SEO fossil nobody updated. The doc describing a folder that no longer exists. The model ID that shipped last quarter and now dates the whole piece. Human content decays silently and pretends it hasn't — the static page frozen in amber, the broken link that's been broken since a redesign two years back. Lasting forever isn't the goal; it's the dishonest cosplay of the monument.
 
 `half-life` is the honest version: point it at your archive and it ranks every piece by how far it's decayed.
 
@@ -13,7 +13,7 @@ Content rots the moment it's published. The 2019 tutorial with the dead `npm ins
 - **Age** — how long since the frontmatter date.
 - **Zombie references** — superseded model IDs (`claude-3`, `gpt-4o`, aging `claude-4.x`), retired product names, future-tense framing that's already resolved.
 
-**LLM judgment** (`--llm`, needs a key) — reads each piece and names what expired: predictions that already landed, version-specific claims that moved on, dead features — scored, with the rotted lines quoted.
+**LLM judgment** (`--llm`, needs a key) — reads each piece and names what expired: predictions that already landed, version-specific claims that moved on, dead features. Scored, with the rotted lines quoted.
 
 ```bash
 python half_life.py ./articles --today 2026-07-30            # deterministic, ranked report
