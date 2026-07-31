@@ -1,4 +1,7 @@
-# half-life
+<div align="center">
+  <img src="half_life.png" width="500" alt="half-life">
+  <h1>half-life</h1>
+</div>
 
 A content-decay auditor. It reads a folder of writing and tells you what's rotted.
 
