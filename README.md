@@ -24,6 +24,30 @@ python half_life.py ./articles --llm --json decay.json       # + LLM pass, full 
 pip install -r requirements.txt                              # only needed for --llm
 ```
 
+## A second kind of rot
+
+Stale prose isn't the only way content decays. A repo can be fully fixed
+locally and still be running a months-old build in production — silently,
+with no crash and no error page, because nothing about a working homepage
+tells you the backend routes behind it stopped resolving.
+
+**Deploy-drift check** (`--deploy-check`, no manifest, no LLM):
+
+```bash
+python half_life.py --deploy-check /path/to/netlify-repo https://example.com
+```
+
+It reads the repo's own `netlify.toml` to learn which routes are supposed to
+be real — serverless functions, pretty-path redirects — then asks the live
+site whether each one actually resolves, or whether it's quietly falling
+through to the same SPA-fallback page as a made-up path. A route that returns
+the exact same bytes as a path that cannot possibly exist isn't live; it's
+being swallowed.
+
+This isn't hypothetical. It's how a four-month-old production outage on a
+live Polygon contract got found — every route silently serving the same
+stale `index.html`, including the one that issues signed jackpot payouts.
+
 ## The self-aware part
 
 The model `half-life` uses to hunt stale model IDs is read from the environment, never hardcoded:
@@ -40,7 +64,7 @@ HALFLIFE_MODEL=claude-haiku-4-5 python half_life.py ./articles --llm
 
 ## What it found on its own author's site
 
-Run against a ~120-article red-team catalog (`report.example.md`), the deterministic pass alone surfaced a dead `/articles/…` link, three superseded `claude-3` IDs in one piece, `gpt-4o` scattered across another, and a `claude-sonnet-4-5-*` string baked into example code — none of which any human had flagged. 113 of 122 read clean; the other nine were quietly decaying.
+Run against the ~134-article red-team catalog (`report.example.md`), the deterministic pass caught `GPT-4o` and `GPT-4` scattered across three separate pieces, a `claude-sonnet-4-5-*` string baked into example code, and — best case for the thesis — its own stale model IDs in the article about itself, `half-life-came-for-me-first`. 127 of 134 read clean; the other seven were quietly decaying.
 
 The bots didn't kill the internet. They just stopped pretending it was ever alive-forever. Nothing is solid — so build things that know it.
 

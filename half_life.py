@@ -8,8 +8,17 @@ three months ago. This walks a folder of markdown and tells you what's decaying:
 a deterministic pass (dead links, age, zombie references) that needs no API key,
 and an optional LLM judgment pass that reads each piece and says what expired.
 
+A second, unrelated kind of rot doesn't live in the prose at all: a repo whose
+local commits never reached production, silently, for months, while the site
+in front of users looked completely fine. `--deploy-check` catches that one —
+no manifest, no per-repo config. It reads a Netlify repo's own `netlify.toml`
+to learn which routes are supposed to be real (functions, pretty-path
+redirects), then asks the live site whether each one actually is, or whether
+it's quietly falling through to the same SPA-fallback page as everything else.
+
 Usage:
     python half_life.py <articles_dir> [--today YYYY-MM-DD] [--llm] [--json out.json]
+    python half_life.py --deploy-check <repo_dir> <live_url>
 
 The LLM's model is read from the environment (HALFLIFE_MODEL), never hardcoded.
 A tool that hunts stale model IDs must not rot on its own — that's the joke that
@@ -18,10 +27,15 @@ writes itself. Default is claude-opus-5; swap it without a code change.
 from __future__ import annotations
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
+import secrets
 import sys
+import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # ── deterministic detectors (no LLM, no key) ─────────────────────────────────
@@ -157,15 +171,121 @@ def llm_scan(body: str, today: datetime.date):
     return json.loads(resp.content[0].text)
 
 
+# ── deploy-drift detector (no LLM, no manifest) ──────────────────────────────
+# A repo can be fully fixed locally and still be running a months-old build in
+# production, silently — no crash, no error page, nothing that makes a person
+# check. The signature that gives it away: real backend routes returning the
+# exact same bytes as the homepage, because an SPA-fallback rule is catching
+# everything, including the routes that were never supposed to fall through.
+
+FETCH_TIMEOUT = 10
+
+
+def _fetch(url: str) -> tuple[int | None, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": "half-life-deploy-check/1"})
+    try:
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        return e.code, ""
+    except (urllib.error.URLError, TimeoutError):
+        return None, ""
+
+
+def _fingerprint(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def _expected_routes(repo_dir: Path) -> list[str]:
+    toml_path = repo_dir / "netlify.toml"
+    if not toml_path.exists():
+        return []
+    config = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+
+    routes: list[str] = []
+
+    # Real serverless functions, minus shared helpers (leading underscore).
+    fn_dir = config.get("build", {}).get("functions")
+    if fn_dir:
+        fn_path = repo_dir / fn_dir
+        if fn_path.is_dir():
+            for f in sorted(fn_path.glob("*.js")):
+                if not f.stem.startswith("_"):
+                    routes.append(f"/.netlify/functions/{f.stem}")
+
+    # Pretty-path redirects that point at a function, not the SPA catch-all.
+    for r in config.get("redirects", []):
+        to = r.get("to", "")
+        frm = r.get("from", "")
+        if to.startswith("/.netlify/functions/") and frm != "/*":
+            routes.append(frm)
+
+    return sorted(set(routes))
+
+
+def deploy_check(repo_dir: Path, live_url: str) -> int:
+    live_url = live_url.rstrip("/")
+    routes = _expected_routes(repo_dir)
+    if not routes:
+        print(f"no netlify.toml functions/redirects found under {repo_dir}", file=sys.stderr)
+        return 1
+
+    # Baseline: a path that cannot possibly be real. If the site has an
+    # SPA-fallback rule, this is what "swallowed" looks like.
+    decoy = f"/__halflife_deploy_check_{secrets.token_hex(6)}__"
+    decoy_status, decoy_body = _fetch(live_url + decoy)
+    fallback_fp = _fingerprint(decoy_body) if decoy_body else None
+
+    print(f"# Deploy-drift check — {live_url}, {len(routes)} expected route(s)\n")
+    if fallback_fp is None:
+        print(f"    (fake path {decoy} → HTTP {decoy_status}, no fallback signature to compare against)\n")
+
+    swallowed = []
+    for route in routes:
+        status, body = _fetch(live_url + route)
+        fp = _fingerprint(body) if body else None
+        if fallback_fp is not None and fp == fallback_fp:
+            print(f"## [swallowed] {route}")
+            print(f"    · returns the same page as a nonexistent path — the SPA fallback caught it, not the real route")
+            swallowed.append(route)
+        elif status is None:
+            print(f"## [unreachable] {route}")
+            print(f"    · request failed or timed out")
+        else:
+            print(f"## [live      ] {route}  ·  HTTP {status}")
+        print()
+
+    print("---")
+    if swallowed:
+        print(f"{len(swallowed)}/{len(routes)} expected route(s) are being swallowed by the SPA fallback.")
+        print("That almost always means the live deploy is older than the code that defines these routes.")
+    else:
+        print(f"{len(routes)}/{len(routes)} expected route(s) resolve to something other than the fallback page.")
+    return 0
+
+
 # ── report ───────────────────────────────────────────────────────────────────
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="content-decay auditor")
-    ap.add_argument("dir", help="folder of markdown articles")
+    ap.add_argument("dir", nargs="?", help="folder of markdown articles")
     ap.add_argument("--today", help="override today's date (YYYY-MM-DD)")
     ap.add_argument("--llm", action="store_true", help="add the LLM judgment pass (needs a key)")
     ap.add_argument("--json", metavar="FILE", help="also write the full report as JSON")
+    ap.add_argument(
+        "--deploy-check",
+        nargs=2,
+        metavar=("REPO_DIR", "LIVE_URL"),
+        help="check whether a Netlify repo's routes are actually live, or swallowed by a stale deploy",
+    )
     args = ap.parse_args()
+
+    if args.deploy_check:
+        repo_dir, live_url = args.deploy_check
+        return deploy_check(Path(repo_dir), live_url)
+
+    if not args.dir:
+        ap.error("dir is required unless --deploy-check is given")
 
     today = (
         datetime.date.fromisoformat(args.today)
